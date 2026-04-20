@@ -340,7 +340,9 @@ button[key*="chart_ai_"]:hover {
 """, unsafe_allow_html=True)
 
 
-BACKEND_URL     = "http://127.0.0.1:8000"
+# I made the backend URL configurable via environment variable so the
+# frontend works both locally and when hosted on Render/Streamlit Cloud.
+BACKEND_URL     = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
 REQUEST_TIMEOUT = 10
 
 PUBLIC_PAGES  = ["Login", "Register", "Market Overview (Guest)", "Learn"]
