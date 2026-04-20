@@ -49,13 +49,17 @@ CRYPTO_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
-_YAHOO_HEADERS = {
+_API_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
+    "Accept": "application/json",
 }
+
+# Keep backward-compatible alias
+_YAHOO_HEADERS = _API_HEADERS
 
 
 def _yahoo_chart(ticker: str, range_str: str = "2d", interval: str = "1d") -> dict:
@@ -196,7 +200,7 @@ def get_crypto_data(coin_id: str) -> dict:
             f"{COINGECKO_BASE}/simple/price"
             f"?ids={coin_id}&vs_currencies=usd&include_24hr_change=true"
         )
-        resp = http_requests.get(url, timeout=TIMEOUT)
+        resp = http_requests.get(url, headers=_API_HEADERS, timeout=TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
 
@@ -258,7 +262,7 @@ def get_crypto_data_batch(coin_ids: list[str]) -> list[dict]:
                 f"{COINGECKO_BASE}/simple/price"
                 f"?ids={ids_param}&vs_currencies=usd&include_24hr_change=true"
             )
-            resp = http_requests.get(url, timeout=TIMEOUT)
+            resp = http_requests.get(url, headers=_API_HEADERS, timeout=TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
 
@@ -313,7 +317,7 @@ def get_crypto_history(coin_id: str, days: int = 7) -> list:
             f"{COINGECKO_BASE}/coins/{coin_id}/ohlc"
             f"?vs_currency=usd&days={days}"
         )
-        resp = http_requests.get(url, timeout=TIMEOUT)
+        resp = http_requests.get(url, headers=_API_HEADERS, timeout=TIMEOUT)
         resp.raise_for_status()
         ohlc = resp.json()
         history = []
@@ -337,7 +341,7 @@ def get_crypto_history(coin_id: str, days: int = 7) -> list:
                 f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"
                 f"?vs_currency=usd&days={days}&interval=daily"
             )
-            resp = http_requests.get(url, timeout=TIMEOUT)
+            resp = http_requests.get(url, headers=_API_HEADERS, timeout=TIMEOUT)
             resp.raise_for_status()
             prices = resp.json().get("prices", [])
             return [
@@ -354,7 +358,7 @@ def get_crypto_history(coin_id: str, days: int = 7) -> list:
 def search_crypto(query: str) -> list:
     try:
         search_url = f"{COINGECKO_BASE}/search?query={query}"
-        resp = http_requests.get(search_url, timeout=TIMEOUT)
+        resp = http_requests.get(search_url, headers=_API_HEADERS, timeout=TIMEOUT)
         resp.raise_for_status()
         coins = resp.json().get("coins", [])[:5]
 
@@ -366,7 +370,7 @@ def search_crypto(query: str) -> list:
             f"{COINGECKO_BASE}/simple/price"
             f"?ids={ids}&vs_currencies=usd&include_24hr_change=true"
         )
-        price_resp = http_requests.get(price_url, timeout=TIMEOUT)
+        price_resp = http_requests.get(price_url, headers=_API_HEADERS, timeout=TIMEOUT)
         price_resp.raise_for_status()
         prices = price_resp.json()
 
