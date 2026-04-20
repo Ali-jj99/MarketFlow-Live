@@ -345,9 +345,11 @@ button[key*="chart_ai_"]:hover {
 # while local development uses environment variables or the default.
 def _get_backend_url():
     try:
-        return st.secrets["BACKEND_URL"]
+        if "BACKEND_URL" in st.secrets:
+            return st.secrets["BACKEND_URL"]
     except Exception:
-        return os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+        pass
+    return os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
 
 BACKEND_URL     = _get_backend_url()
 REQUEST_TIMEOUT = 10
@@ -383,66 +385,8 @@ _init_state()
 # Streamlit renders text between $ signs as LaTeX math, which breaks
 # AI responses containing dollar amounts like "$259.48". This helper
 # escapes dollar signs so they display as plain text.
-def _escape_ai(text) -> str:
-    """Escape dollar signs so Streamlit doesn't render them as LaTeX.
-    Handles both plain strings and structured dicts from the new AI endpoints."""
-    if isinstance(text, dict):
-        return _render_structured_ai(text)
-    return str(text).replace("$", "&#36;")
-
-
-def _render_structured_ai(data: dict, mode: str = "summary") -> str:
-    """Render a structured AI response dict into readable HTML."""
-    parts = []
-
-    if mode == "summary":
-        if data.get("overview"):
-            parts.append(f'<p>{data["overview"].replace("$", "&#36;")}</p>')
-        if data.get("why_people_hold_it"):
-            parts.append(f'<p><b>Why people hold it:</b> {data["why_people_hold_it"].replace("$", "&#36;")}</p>')
-        if data.get("todays_move"):
-            parts.append(f'<p><b>Today&#39;s move:</b> {data["todays_move"].replace("$", "&#36;")}</p>')
-        if data.get("key_facts"):
-            facts = "".join(f"<li>{f.replace('$', '&#36;')}</li>" for f in data["key_facts"])
-            parts.append(f'<p><b>Key facts:</b></p><ul>{facts}</ul>')
-        if data.get("sentiment"):
-            badge_cls = {"bullish": "change-pos", "bearish": "change-neg"}.get(data["sentiment"], "change-neu")
-            parts.append(f'<p><b>Sentiment:</b> <span class="{badge_cls}">{data["sentiment"].capitalize()}</span></p>')
-        if data.get("risks"):
-            risks = "".join(f"<li>{r.replace('$', '&#36;')}</li>" for r in data["risks"])
-            parts.append(f'<p><b>Risks to know:</b></p><ul>{risks}</ul>')
-
-    elif mode == "ask":
-        if data.get("answer"):
-            parts.append(f'<p>{data["answer"].replace("$", "&#36;")}</p>')
-        if data.get("supporting_points"):
-            pts = "".join(f"<li>{p.replace('$', '&#36;')}</li>" for p in data["supporting_points"])
-            parts.append(f'<p><b>Supporting points:</b></p><ul>{pts}</ul>')
-        if data.get("caveats"):
-            cavs = "".join(f"<li>{c.replace('$', '&#36;')}</li>" for c in data["caveats"])
-            parts.append(f'<p><b>Caveats:</b></p><ul>{cavs}</ul>')
-        if data.get("confidence"):
-            parts.append(f'<p><b>Confidence:</b> {data["confidence"].capitalize()}</p>')
-
-    elif mode == "chart":
-        if data.get("trend_summary"):
-            parts.append(f'<p>{data["trend_summary"].replace("$", "&#36;")}</p>')
-        if data.get("overall_direction"):
-            arrow = {"up": "▲", "down": "▼"}.get(data["overall_direction"], "─")
-            pct = data.get("overall_change_pct", 0)
-            parts.append(f'<p><b>Direction:</b> {arrow} {abs(pct):.2f}%</p>')
-        if data.get("volatility"):
-            parts.append(f'<p><b>Volatility:</b> {data["volatility"].capitalize()}</p>')
-        if data.get("key_moments"):
-            moments = "".join(
-                f'<li>{m.get("date", "")}: &#36;{m.get("price", 0):,.2f} — {m.get("note", "").replace("$", "&#36;")}</li>'
-                for m in data["key_moments"]
-            )
-            parts.append(f'<p><b>Key moments:</b></p><ul>{moments}</ul>')
-        if data.get("takeaway"):
-            parts.append(f'<p><b>Takeaway:</b> {data["takeaway"].replace("$", "&#36;")}</p>')
-
-    return "\n".join(parts) if parts else str(data).replace("$", "&#36;")
+def _escape_ai(text: str) -> str:
+    return text.replace("$", "&#36;")
 
 
 def _apply_pending_page():
@@ -592,37 +536,24 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
     ai_key = f"ai_{symbol}_{atype}"
     if st.button("AI Summary", key=ai_key, use_container_width=True):
         with st.spinner("Getting AI summary..."):
-            ai_resp, ai_err = api_post("/api/ai/summary", {
-                "symbol": symbol,
-                "name": name,
-                "asset_type": atype,
-                "price": price,
-                "change_pct_24h": change,
-            })
+            ai_resp, ai_err = api_get(
+                f"/api/ai/summary?symbol={symbol}&name={name}"
+                f"&asset_type={atype}&price={price}&change={change}"
+            )
         if ai_err:
             st.warning("AI summary is temporarily unavailable.")
         elif ai_resp.status_code == 200:
-            body = ai_resp.json()
-            summary_data = body.get("summary", "")
-            fmt = body.get("format", "plain")
-            st.session_state[f"ai_result_{ai_key}"] = summary_data
-            st.session_state[f"ai_fmt_{ai_key}"] = fmt
+            st.session_state[f"ai_result_{ai_key}"] = ai_resp.json().get("summary", "")
         elif ai_resp.status_code == 503:
             st.warning("AI service is not configured. Add your OpenRouter API key to .env.")
         else:
             st.warning("Could not generate summary right now. Please try again.")
 
     if st.session_state.get(f"ai_result_{ai_key}"):
-        raw = st.session_state[f"ai_result_{ai_key}"]
-        fmt = st.session_state.get(f"ai_fmt_{ai_key}", "plain")
-        if fmt == "structured" and isinstance(raw, dict):
-            rendered = _render_structured_ai(raw, mode="summary")
-        else:
-            rendered = _escape_ai(raw)
         st.markdown(
             f'<div class="tip-box">'
             f'<div class="tip-label">AI Summary — {symbol.upper()}</div>'
-            f'<div class="tip-content">{rendered}</div>'
+            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_result_{ai_key}"])}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -640,36 +571,23 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
     )
     if user_q and st.button("Ask", key=f"askbtn_{symbol}_{atype}", use_container_width=True):
         with st.spinner("Thinking..."):
-            ai_resp, ai_err = api_post("/api/ai/ask", {
-                "context": {
-                    "symbol": symbol,
-                    "name": name,
-                    "asset_type": atype,
-                    "price": price,
-                    "change_pct_24h": change,
-                },
-                "question": user_q,
-            })
+            ai_resp, ai_err = api_get(
+                f"/api/ai/ask?symbol={symbol}&name={name}"
+                f"&asset_type={atype}&price={price}&change={change}"
+                f"&question={user_q}"
+            )
         if ai_err:
             st.warning("AI is temporarily unavailable.")
         elif ai_resp.status_code == 200:
-            body = ai_resp.json()
-            st.session_state[f"ai_answer_{ask_key}"] = body.get("answer", "")
-            st.session_state[f"ai_ask_fmt_{ask_key}"] = body.get("format", "plain")
+            st.session_state[f"ai_answer_{ask_key}"] = ai_resp.json().get("answer", "")
         else:
             st.warning("Could not get an answer right now. Please try again.")
 
     if st.session_state.get(f"ai_answer_{ask_key}"):
-        raw = st.session_state[f"ai_answer_{ask_key}"]
-        fmt = st.session_state.get(f"ai_ask_fmt_{ask_key}", "plain")
-        if fmt == "structured" and isinstance(raw, dict):
-            rendered = _render_structured_ai(raw, mode="ask")
-        else:
-            rendered = _escape_ai(raw)
         st.markdown(
             f'<div class="tip-box">'
             f'<div class="tip-label">AI Answer — {symbol.upper()}</div>'
-            f'<div class="tip-content">{rendered}</div>'
+            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_answer_{ask_key}"])}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -1008,38 +926,25 @@ def render_market_overview():
                     chart_ai_key = f"chart_ai_{sym}_{atype}"
                     if st.button("AI Summary — Explain this chart", key=chart_ai_key, use_container_width=True):
                         with st.spinner("Analysing chart..."):
-                            chart_history = [{"date": p["date"], "price": p["price"]} for p in history]
                             ai_resp, ai_err = api_post("/api/ai/chart", {
-                                "context": {
-                                    "symbol": sym,
-                                    "name": ch_name,
-                                    "asset_type": atype,
-                                    "price": price,
-                                    "change_pct_24h": change,
-                                },
+                                "symbol": sym,
+                                "name": ch_name,
+                                "asset_type": atype,
                                 "period": period_labels.get(period, period),
-                                "history": chart_history,
+                                "history": history,
                             }, timeout=35)
                         if ai_err:
                             st.warning("AI summary is temporarily unavailable.")
                         elif ai_resp.status_code == 200:
-                            body = ai_resp.json()
-                            st.session_state[f"ai_result_{chart_ai_key}"] = body.get("analysis", "")
-                            st.session_state[f"ai_chart_fmt_{chart_ai_key}"] = body.get("format", "plain")
+                            st.session_state[f"ai_result_{chart_ai_key}"] = ai_resp.json().get("answer", "")
                         else:
                             st.warning("Could not generate summary right now.")
 
                     if st.session_state.get(f"ai_result_{chart_ai_key}"):
-                        raw = st.session_state[f"ai_result_{chart_ai_key}"]
-                        fmt = st.session_state.get(f"ai_chart_fmt_{chart_ai_key}", "plain")
-                        if fmt == "structured" and isinstance(raw, dict):
-                            rendered = _render_structured_ai(raw, mode="chart")
-                        else:
-                            rendered = _escape_ai(raw)
                         st.markdown(
                             f'<div class="tip-box">'
                             f'<div class="tip-label">AI Summary — {sym.upper()} Chart</div>'
-                            f'<div class="tip-content">{rendered}</div>'
+                            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_result_{chart_ai_key}"])}</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
@@ -1053,39 +958,26 @@ def render_market_overview():
                     )
                     if chart_q and st.button("Ask", key=f"chart_askbtn_{sym}_{atype}", use_container_width=True):
                         with st.spinner("Thinking..."):
-                            chart_history = [{"date": p["date"], "price": p["price"]} for p in history]
                             ai_resp, ai_err = api_post("/api/ai/chart", {
-                                "context": {
-                                    "symbol": sym,
-                                    "name": ch_name,
-                                    "asset_type": atype,
-                                    "price": price,
-                                    "change_pct_24h": change,
-                                },
+                                "symbol": sym,
+                                "name": ch_name,
+                                "asset_type": atype,
                                 "period": period_labels.get(period, period),
-                                "history": chart_history,
+                                "history": history,
                                 "question": chart_q,
                             }, timeout=35)
                         if ai_err:
                             st.warning("AI is temporarily unavailable.")
                         elif ai_resp.status_code == 200:
-                            body = ai_resp.json()
-                            st.session_state[f"ai_answer_{chart_ask_key}"] = body.get("analysis", "")
-                            st.session_state[f"ai_chartask_fmt_{chart_ask_key}"] = body.get("format", "plain")
+                            st.session_state[f"ai_answer_{chart_ask_key}"] = ai_resp.json().get("answer", "")
                         else:
                             st.warning("Could not get an answer right now.")
 
                     if st.session_state.get(f"ai_answer_{chart_ask_key}"):
-                        raw = st.session_state[f"ai_answer_{chart_ask_key}"]
-                        fmt = st.session_state.get(f"ai_chartask_fmt_{chart_ask_key}", "plain")
-                        if fmt == "structured" and isinstance(raw, dict):
-                            rendered = _render_structured_ai(raw, mode="chart")
-                        else:
-                            rendered = _escape_ai(raw)
                         st.markdown(
                             f'<div class="tip-box">'
                             f'<div class="tip-label">AI Answer — {sym.upper()}</div>'
-                            f'<div class="tip-content">{rendered}</div>'
+                            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_answer_{chart_ask_key}"])}</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )

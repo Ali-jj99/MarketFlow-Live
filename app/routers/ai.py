@@ -1,253 +1,27 @@
-"""AI-powered asset analysis routes using structured JSON output.
-
-I rebuilt the AI endpoints to use schema-driven JSON responses instead of
-free-text generation. Each endpoint returns a typed Pydantic model so the
-frontend can render structured, consistent output (overview, key facts,
-sentiment, risks etc.) rather than unpredictable prose.
-
-Key design decisions:
-- System prompt drives behaviour; context is a structured key:value block.
-- Output schema is embedded in the prompt so the model knows exactly what
-  fields to fill. Field `description` attributes act as per-field instructions.
-- JSON mode via OpenRouter's response_format, with a defensive retry if the
-  first response fails validation — and a final plain-text fallback so the
-  feature never fully breaks.
-- POST endpoints with JSON bodies for richer context passing.
-"""
-
-from __future__ import annotations
-
-import json
-import logging
-import re
-from typing import Literal, Optional
+"""I created this route to integrate AI-powered summaries into the platform.
+I used OpenRouter's API with the NVIDIA Nemotron 3 Super model because it's
+free, reliable, and ranked highly for finance — which fits the educational
+goal of helping users understand what each stock or crypto actually is."""
 
 import requests as http_requests
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from app.config import OPENROUTER_API_KEY
 
-log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL_ID = "nvidia/nemotron-3-super-120b-a12b:free"
 
-
-# ---------------------------------------------------------------------------
-# Context model — everything the AI might want to know about an asset.
-# Optional fields are only rendered into the prompt if present.
-# ---------------------------------------------------------------------------
-
-class AssetContext(BaseModel):
-    symbol: str
-    name: str = ""
-    asset_type: Literal["stock", "crypto"] = "stock"
-    price: float = 0.0
-    change_pct_24h: float = 0.0
-    volume_24h: Optional[float] = None
-    market_cap: Optional[float] = None
-    sector: Optional[str] = None
-    week_52_high: Optional[float] = None
-    week_52_low: Optional[float] = None
-    all_time_high: Optional[float] = None
-    description_hint: Optional[str] = None
+# I implemented a simple in-memory cache so the same asset doesn't trigger
+# repeated API calls — this keeps the platform fast and avoids unnecessary requests.
+_summary_cache: dict[str, str] = {}
 
 
-# ---------------------------------------------------------------------------
-# Typed response schemas. Field descriptions act as per-field instructions.
-# ---------------------------------------------------------------------------
-
-class SummaryResponse(BaseModel):
-    overview: str = Field(
-        description="2-3 sentences in plain English: what is this asset and what does it do?"
-    )
-    why_people_hold_it: str = Field(
-        description="1-2 sentences on why investors typically buy this. No hype."
-    )
-    todays_move: str = Field(
-        description=(
-            "1-2 sentences on plausible general reasons today's price could be moving "
-            "this way. Do NOT invent specific news or earnings. If the move is small, say so."
-        )
-    )
-    key_facts: list[str] = Field(description="3-5 short factual bullet points.")
-    sentiment: Literal["bullish", "bearish", "neutral"] = Field(
-        description="Overall short-term read from the data provided only."
-    )
-    risks: list[str] = Field(
-        description="2-3 educational risks a beginner should understand."
-    )
-
-
-class AskResponse(BaseModel):
-    answer: str = Field(description="Direct, clear answer to the user's question in 2-4 sentences.")
-    supporting_points: list[str] = Field(description="2-4 facts that back the answer.")
-    caveats: list[str] = Field(
-        description="1-2 things the answer doesn't account for, or where the user should be careful."
-    )
-    confidence: Literal["low", "medium", "high"] = Field(
-        description="How well the provided context supports the answer."
-    )
-
-
-class ChartMoment(BaseModel):
-    date: str
-    price: float
-    note: str = Field(description="What stood out about this point (e.g. 'largest single-day drop').")
-
-
-class ChartAnalysisResponse(BaseModel):
-    trend_summary: str = Field(description="2-3 sentence overview of what happened in this period.")
-    overall_direction: Literal["up", "down", "flat"]
-    overall_change_pct: float
-    volatility: Literal["low", "medium", "high"]
-    key_moments: list[ChartMoment] = Field(
-        description="2-4 notable points in the series — peaks, troughs, big moves."
-    )
-    takeaway: str = Field(description="One-line headline summarising the chart.")
-
-
-# ---------------------------------------------------------------------------
-# Prompt plumbing
-# ---------------------------------------------------------------------------
-
-SYSTEM_PROMPT = (
-    "You are a finance explainer for a retail education platform. Your audience "
-    "is curious beginners: use plain language, define jargon when you use it, "
-    "and never invent specific news, numbers, or insider reasons for a price "
-    "move. If a move could have multiple causes, say so.\n\n"
-    "You will receive structured asset context followed by a JSON schema. "
-    "Respond with a SINGLE valid JSON object matching that schema exactly. "
-    "No markdown fences, no prose before or after, no restating of these "
-    "instructions."
-)
-
-
-def _render_context(ctx: AssetContext) -> str:
-    """Turn the context model into a clean key:value block."""
-    direction = (
-        "up" if ctx.change_pct_24h > 0
-        else "down" if ctx.change_pct_24h < 0
-        else "flat"
-    )
-    label = f"{ctx.name} ({ctx.symbol.upper()})" if ctx.name else ctx.symbol.upper()
-    type_label = "stock" if ctx.asset_type == "stock" else "cryptocurrency"
-
-    lines = [
-        f"Asset:         {label}",
-        f"Type:          {type_label}",
-        f"Price:         ${ctx.price:,.2f}",
-        f"24h change:    {direction} {abs(ctx.change_pct_24h):.2f}%",
-    ]
-    if ctx.volume_24h is not None:
-        lines.append(f"24h volume:    ${ctx.volume_24h:,.0f}")
-    if ctx.market_cap is not None:
-        lines.append(f"Market cap:    ${ctx.market_cap:,.0f}")
-    if ctx.sector:
-        lines.append(f"Sector:        {ctx.sector}")
-    if ctx.week_52_low is not None and ctx.week_52_high is not None:
-        lines.append(f"52-week range: ${ctx.week_52_low:,.2f} – ${ctx.week_52_high:,.2f}")
-    if ctx.all_time_high is not None:
-        lines.append(f"All-time high: ${ctx.all_time_high:,.2f}")
-    if ctx.description_hint:
-        lines.append(f"Notes:         {ctx.description_hint}")
-
-    return "\n".join(lines)
-
-
-def _strip_fences(text: str) -> str:
-    """Remove markdown code fences that some models wrap JSON in."""
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
-
-def _call_nemotron_json(
-    system: str,
-    user: str,
-    response_model: type[BaseModel],
-    max_tokens: int = 500,
-) -> BaseModel:
-    """Call the model asking for JSON matching response_model's schema.
-    Validates and retries once if the first response fails parsing.
-    Falls back to a plain-text approach if JSON mode completely fails."""
-    schema = response_model.model_json_schema()
-    schema_block = (
-        "Respond with a JSON object matching this schema:\n"
-        f"{json.dumps(schema, indent=2)}"
-    )
-
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": f"{user}\n\n{schema_block}"},
-    ]
-
-    def _post(msgs: list[dict], use_json_mode: bool = True) -> str:
-        payload = {
-            "model": MODEL_ID,
-            "messages": msgs,
-            "max_tokens": max_tokens,
-            "temperature": 0.3,
-        }
-        if use_json_mode:
-            payload["response_format"] = {"type": "json_object"}
-
-        resp = http_requests.post(
-            OPENROUTER_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-
-    # Attempt 1: JSON mode
-    raw = _post(messages)
-    raw = _strip_fences(raw)
-    try:
-        return response_model.model_validate_json(raw)
-    except Exception as first_err:
-        log.warning("First JSON parse failed (%s); retrying.", first_err)
-
-    # Attempt 2: Stricter retry
-    retry_messages = messages + [
-        {"role": "assistant", "content": raw},
-        {
-            "role": "user",
-            "content": (
-                "That wasn't valid JSON matching the schema. "
-                "Reply again with ONLY the JSON object — no prose, no markdown."
-            ),
-        },
-    ]
-    raw2 = _post(retry_messages)
-    raw2 = _strip_fences(raw2)
-    try:
-        return response_model.model_validate_json(raw2)
-    except Exception as second_err:
-        log.warning("Second JSON parse also failed (%s); using fallback.", second_err)
-        # Final fallback: return whatever text we got in a minimal valid structure
-        raise ValueError(f"JSON parsing failed after retry: {second_err}")
-
-
-# ---------------------------------------------------------------------------
-# Plain-text fallback (reuses the old few-shot approach if JSON mode fails)
-# ---------------------------------------------------------------------------
-
-def _call_nemotron_text(messages: list[dict], max_tokens: int = 150) -> str:
-    """Simple text completion — used as fallback if JSON mode fails."""
+def _call_nemotron(messages: list[dict], max_tokens: int = 120) -> str:
+    """I centralised the API call logic here to avoid repeating it
+    in every endpoint — keeps the code DRY and easier to maintain."""
     resp = http_requests.post(
         OPENROUTER_URL,
         headers={
@@ -275,147 +49,209 @@ def _call_nemotron_text(messages: list[dict], max_tokens: int = 150) -> str:
     return text
 
 
-# ---------------------------------------------------------------------------
-# In-memory cache
-# ---------------------------------------------------------------------------
+# I switched to a few-shot prompting approach because Nemotron was echoing
+# back system message instructions in its responses. By showing the model
+# example Q&A pairs, it learns the expected format by imitation rather than
+# by following rules it might repeat out loud.
+_SUMMARY_EXAMPLES = [
+    {
+        "role": "user",
+        "content": "Tell me about Apple Inc. (AAPL), a stock at $185.50, up 1.20% today."
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Apple is one of the biggest tech companies in the world, known for "
+            "making iPhones, MacBooks, and running services like iCloud and Apple Music. "
+            "The stock is up a bit today, which could be tied to positive market "
+            "sentiment or recent product news."
+        ),
+    },
+    {
+        "role": "user",
+        "content": "Tell me about Bitcoin (bitcoin), a cryptocurrency at $64,200.00, down 2.30% today."
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Bitcoin is the original cryptocurrency, often called digital gold because "
+            "people use it as a store of value. It's down a couple percent today, which "
+            "is pretty normal for crypto since it tends to swing more than traditional stocks."
+        ),
+    },
+]
 
-_summary_cache: dict[str, dict] = {}
+_ASK_EXAMPLES = [
+    {
+        "role": "user",
+        "content": "About Tesla Inc. (TSLA), a stock at $245.00, up 3.50% today: Why is it going up?"
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Tesla's price can jump on things like strong delivery numbers, new factory "
+            "updates, or general excitement around electric vehicles. A 3.5% move up in "
+            "a day is fairly typical for Tesla since it's known for big swings."
+        ),
+    },
+]
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-@router.post("/summary", response_model=dict)
-def get_ai_summary(ctx: AssetContext):
+@router.get("/summary")
+def get_ai_summary(
+    symbol: str = Query(..., description="Ticker or coin ID, e.g. AAPL or bitcoin"),
+    name: str = Query("", description="Display name of the asset"),
+    asset_type: str = Query("stock", description="stock or crypto"),
+    price: float = Query(0.0, description="Current price"),
+    change: float = Query(0.0, description="24h change percentage"),
+):
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
 
-    cache_key = f"{ctx.symbol.lower()}:{ctx.asset_type}"
-    if cached := _summary_cache.get(cache_key):
-        return {"summary": cached, "source": "cache", "format": "structured"}
+    cache_key = f"{symbol.lower()}:{asset_type}"
+    if cache_key in _summary_cache:
+        return {"summary": _summary_cache[cache_key], "source": "cache"}
 
-    user_msg = (
-        "Explain the following asset to a beginner and assess today's move.\n\n"
-        f"{_render_context(ctx)}"
-    )
+    direction = "up" if change > 0 else ("down" if change < 0 else "flat")
+    asset_label = f"{name} ({symbol.upper()})" if name else symbol.upper()
+    type_label = "stock" if asset_type == "stock" else "cryptocurrency"
+
+    messages = list(_SUMMARY_EXAMPLES) + [
+        {
+            "role": "user",
+            "content": (
+                f"Tell me about {asset_label}, a {type_label} at "
+                f"${price:,.2f}, {direction} {abs(change):.2f}% today."
+            ),
+        },
+    ]
 
     try:
-        summary = _call_nemotron_json(SYSTEM_PROMPT, user_msg, SummaryResponse, max_tokens=500)
-        result = summary.model_dump()
-        _summary_cache[cache_key] = result
-        return {"summary": result, "source": "live", "format": "structured"}
-    except (ValueError, Exception) as json_err:
-        # Fallback to plain text if JSON mode fails
-        log.warning("JSON summary failed, falling back to text: %s", json_err)
-        try:
-            direction = "up" if ctx.change_pct_24h > 0 else ("down" if ctx.change_pct_24h < 0 else "flat")
-            label = f"{ctx.name} ({ctx.symbol.upper()})" if ctx.name else ctx.symbol.upper()
-            type_label = "stock" if ctx.asset_type == "stock" else "cryptocurrency"
-            messages = [
-                {"role": "user", "content": f"Tell me about {label}, a {type_label} at ${ctx.price:,.2f}, {direction} {abs(ctx.change_pct_24h):.2f}% today. Keep it to 2-3 sentences, educational and casual."},
-            ]
-            text = _call_nemotron_text(messages, max_tokens=150)
-            _summary_cache[cache_key] = text
-            return {"summary": text, "source": "live", "format": "plain"}
-        except http_requests.exceptions.Timeout:
-            raise HTTPException(status_code=504, detail="AI service timed out")
-        except Exception as e:
-            log.exception("Nemotron summary completely failed: %s", e)
-            raise HTTPException(status_code=502, detail="AI summary is temporarily unavailable")
+        summary = _call_nemotron(messages, max_tokens=120)
+        _summary_cache[cache_key] = summary
+        return {"summary": summary, "source": "live"}
+    except http_requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="AI service timed out — please try again")
+    except Exception as e:
+        print(f"[ai] Nemotron request failed: {e}")
+        raise HTTPException(status_code=502, detail="AI summary is temporarily unavailable")
 
 
-class AskRequest(BaseModel):
-    context: AssetContext
-    question: str
-
-
-@router.post("/ask", response_model=dict)
-def ask_ai_question(req: AskRequest):
+@router.get("/ask")
+def ask_ai_question(
+    symbol: str = Query(..., description="Ticker or coin ID"),
+    name: str = Query("", description="Display name of the asset"),
+    asset_type: str = Query("stock", description="stock or crypto"),
+    price: float = Query(0.0, description="Current price"),
+    change: float = Query(0.0, description="24h change percentage"),
+    question: str = Query(..., description="The user's question about this asset"),
+):
+    """I implemented this endpoint so users can ask their own questions about
+    any asset. I did this because the educational goal of the platform means
+    users should be able to interact with the data and learn by asking."""
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
 
-    user_msg = (
-        "Answer the user's question about this asset. Stay general-educational — "
-        "do NOT invent specific news events.\n\n"
-        f"{_render_context(req.context)}\n\n"
-        f"Question: {req.question}"
-    )
+    asset_label = f"{name} ({symbol.upper()})" if name else symbol.upper()
+    type_label = "stock" if asset_type == "stock" else "cryptocurrency"
+    direction = "up" if change > 0 else ("down" if change < 0 else "flat")
+
+    messages = list(_ASK_EXAMPLES) + [
+        {
+            "role": "user",
+            "content": (
+                f"About {asset_label} (a {type_label} at ${price:,.2f}, "
+                f"{direction} {abs(change):.2f}% today): {question}"
+            ),
+        },
+    ]
 
     try:
-        answer = _call_nemotron_json(SYSTEM_PROMPT, user_msg, AskResponse, max_tokens=500)
-        return {"answer": answer.model_dump(), "format": "structured"}
-    except (ValueError, Exception) as json_err:
-        log.warning("JSON ask failed, falling back to text: %s", json_err)
-        try:
-            label = f"{req.context.name} ({req.context.symbol.upper()})" if req.context.name else req.context.symbol.upper()
-            messages = [
-                {"role": "user", "content": f"About {label}: {req.question}. Answer in 2-3 sentences, educational and casual."},
-            ]
-            text = _call_nemotron_text(messages, max_tokens=150)
-            return {"answer": text, "format": "plain"}
-        except http_requests.exceptions.Timeout:
-            raise HTTPException(status_code=504, detail="AI service timed out")
-        except Exception as e:
-            log.exception("Nemotron ask completely failed: %s", e)
-            raise HTTPException(status_code=502, detail="AI is temporarily unavailable")
-
-
-class ChartPoint(BaseModel):
-    date: str
-    price: float
+        answer = _call_nemotron(messages, max_tokens=120)
+        return {"answer": answer}
+    except http_requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="AI service timed out")
+    except Exception as e:
+        print(f"[ai] Nemotron ask failed: {e}")
+        raise HTTPException(status_code=502, detail="AI is temporarily unavailable")
 
 
 class ChartRequest(BaseModel):
-    context: AssetContext
+    symbol: str
+    name: str = ""
+    asset_type: str = "stock"
     period: str = "7d"
-    history: list[ChartPoint]
+    history: list[dict] = []
     question: str = ""
 
 
-@router.post("/chart", response_model=dict)
+# I used a few-shot example for chart analysis too, showing the model
+# exactly what a good chart summary looks like with real dates and prices.
+_CHART_EXAMPLE = [
+    {
+        "role": "user",
+        "content": (
+            "Here is the 7 Days price data for Tesla Inc. (TSLA):\n"
+            "2026-04-01: $240.00 | 2026-04-02: $238.50 | 2026-04-03: $242.10 | "
+            "2026-04-04: $245.00 | 2026-04-05: $243.80 | 2026-04-06: $248.90 | "
+            "2026-04-07: $252.30\n"
+            "Overall: up 5.13% (from $240.00 to $252.30)."
+        ),
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Tesla had a strong week, climbing from $240.00 on Apr 1 to $252.30 by "
+            "Apr 7. There was a small dip on Apr 2 down to $238.50, but it recovered "
+            "quickly. The biggest jump was between Apr 5 and Apr 7, where it gained "
+            "about $9 in two days. Overall a solid 5.1% gain for the week."
+        ),
+    },
+]
+
+
+@router.post("/chart")
 def analyse_chart(req: ChartRequest):
+    """I created this endpoint so the AI can analyse actual chart data —
+    specific dates and prices — rather than giving generic summaries.
+    The frontend sends the price history points so the AI can reference them."""
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
-    if not req.history:
-        raise HTTPException(status_code=400, detail="history is empty")
 
-    start = req.history[0].price
-    end = req.history[-1].price
-    overall_pct = round(((end - start) / start) * 100, 2) if start else 0.0
-    direction = "up" if overall_pct > 0 else "down" if overall_pct < 0 else "flat"
+    asset_label = f"{req.name} ({req.symbol.upper()})" if req.name else req.symbol.upper()
+    type_label = "stock" if req.asset_type == "stock" else "cryptocurrency"
 
-    data_lines = "\n".join(f"  {p.date}: ${p.price:,.2f}" for p in req.history)
-    user_msg = (
-        "Analyse the following price history.\n\n"
-        f"{_render_context(req.context)}\n"
-        f"Period:        {req.period}\n"
-        f"Overall move:  {direction} {abs(overall_pct):.2f}% "
-        f"(${start:,.2f} -> ${end:,.2f})\n\n"
-        f"Price points:\n{data_lines}"
+    data_lines = []
+    for point in req.history:
+        date = point.get("date", "")
+        price = point.get("price", 0)
+        data_lines.append(f"{date}: ${price:,.2f}")
+    data_str = " | ".join(data_lines)
+
+    start_price = req.history[0].get("price", 0) if req.history else 0
+    end_price = req.history[-1].get("price", 0) if req.history else 0
+    overall_change = round(((end_price - start_price) / start_price) * 100, 2) if start_price else 0
+    direction = "up" if overall_change > 0 else ("down" if overall_change < 0 else "flat")
+
+    user_content = (
+        f"Here is the {req.period} price data for {asset_label} ({type_label}):\n"
+        f"{data_str}\n"
+        f"Overall: {direction} {abs(overall_change):.2f}% "
+        f"(from ${start_price:,.2f} to ${end_price:,.2f})."
     )
+
     if req.question:
-        user_msg += f"\n\nUser question: {req.question}"
+        user_content += f"\nMy question: {req.question}"
+
+    messages = list(_CHART_EXAMPLE) + [
+        {"role": "user", "content": user_content},
+    ]
 
     try:
-        result = _call_nemotron_json(SYSTEM_PROMPT, user_msg, ChartAnalysisResponse, max_tokens=700)
-        return {"analysis": result.model_dump(), "format": "structured"}
-    except (ValueError, Exception) as json_err:
-        log.warning("JSON chart failed, falling back to text: %s", json_err)
-        try:
-            label = f"{req.context.name} ({req.context.symbol.upper()})" if req.context.name else req.context.symbol.upper()
-            data_str = " | ".join(f"{p.date}: ${p.price:,.2f}" for p in req.history)
-            messages = [
-                {"role": "user", "content": (
-                    f"Here is the {req.period} price data for {label}:\n{data_str}\n"
-                    f"Overall: {direction} {abs(overall_pct):.2f}% (from ${start:,.2f} to ${end:,.2f}). "
-                    f"Explain the trend in 3-4 sentences referencing specific dates and prices."
-                )},
-            ]
-            text = _call_nemotron_text(messages, max_tokens=200)
-            return {"analysis": text, "format": "plain"}
-        except http_requests.exceptions.Timeout:
-            raise HTTPException(status_code=504, detail="AI service timed out")
-        except Exception as e:
-            log.exception("Nemotron chart analysis completely failed: %s", e)
-            raise HTTPException(status_code=502, detail="AI chart analysis is temporarily unavailable")
+        answer = _call_nemotron(messages, max_tokens=180)
+        return {"answer": answer}
+    except http_requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="AI service timed out")
+    except Exception as e:
+        print(f"[ai] Nemotron chart analysis failed: {e}")
+        raise HTTPException(status_code=502, detail="AI chart analysis is temporarily unavailable")
