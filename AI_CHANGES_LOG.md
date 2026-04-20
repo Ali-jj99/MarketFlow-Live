@@ -47,3 +47,27 @@ This file documents specific instances where I used Claude (Anthropic) to assist
 **How Claude helped:** I asked Claude to diagnose why the model was repeating instructions. It identified the issue as a known behaviour with reasoning models and suggested switching from rule-based prompts (system messages with "do this, don't do that") to a few-shot example approach — providing example question-and-answer pairs so the model imitates the format instead of reasoning about rules.
 
 **What I did after:** I restructured all three AI endpoints (`/summary`, `/ask`, `/chart`) to use few-shot examples. I wrote the example conversations myself to match the educational tone of my platform, tested them across multiple assets, and verified the model stopped echoing. I also refactored the API call logic into a shared `_call_nemotron()` helper to keep the code clean.
+
+---
+
+## 5. Compare Page Crash — Plotly Layout Dictionary Unpacking Conflict
+
+**Problem:** The Compare page would crash with a cryptic error: `plotly.graph_objs._figure.Figure.update_layout() got multiple values for keyword argument 'yaxis'` whenever users tried to view bar or line comparison charts.
+
+**What happened:** I had a shared `_PLOTLY_LAYOUT` dictionary containing the base dark-theme styling (background colours, font colours, grid styling, `xaxis` and `yaxis` defaults). When building the Compare charts, I used Python dictionary unpacking (`**_PLOTLY_LAYOUT`) inside `update_layout()` alongside explicit `yaxis=` and `xaxis=` arguments to override axis titles for each chart type. Python doesn't allow the same keyword argument to appear twice in a function call — even if one comes from `**dict` unpacking and the other is explicit — so it threw a `TypeError` at runtime. The issue was subtle because the base layout and the chart-specific layout were defined in completely different parts of the code, so it wasn't obvious that the keys overlapped.
+
+**How Claude helped:** I shared the traceback and the relevant code. Claude identified that `**_PLOTLY_LAYOUT` was silently injecting `xaxis` and `yaxis` keys that collided with my explicit overrides, and suggested refactoring to a two-step approach: first copy the base layout into a new dictionary, then use `.update()` to merge the chart-specific settings — which correctly overwrites duplicate keys instead of causing a conflict.
+
+**What I did after:** I applied this pattern across all four chart types on the Compare page (bar chart, line chart, pie chart, candlestick). I also used this as an opportunity to clean up chart configuration by giving each chart type its own axis labels and tooltip formats, rather than relying on the generic base layout.
+
+---
+
+## 6. Concurrent API Fetching with Rate Limit Avoidance — market_data.py
+
+**Problem:** The dashboard was taking 15–20 seconds to load the Market Overview page because it was making over 30 sequential HTTP requests — one per stock ticker to Yahoo Finance, then one per cryptocurrency to CoinGecko — each waiting for the previous one to finish before starting.
+
+**What happened:** My initial implementation called `get_stock_data()` and `get_crypto_data()` in a simple loop, meaning each API call had to complete (up to 8 seconds timeout) before the next one started. On top of that, CoinGecko's free API has a rate limit of roughly 10–30 requests per minute, so hitting it with 15 individual coin requests in rapid succession would trigger HTTP 429 (Too Many Requests) errors, causing some crypto cards to silently fall back to zero values.
+
+**How Claude helped:** I described the slow load times and the intermittent 429 errors. Claude explained the difference between sequential and concurrent HTTP requests, and suggested two changes: (1) use CoinGecko's batch endpoint (`/simple/price?ids=bitcoin,ethereum,solana,...`) to fetch all crypto prices in a single API call instead of 15 separate ones, and (2) implement a three-tier fallback pattern — try live data first, fall back to stale cache if the API fails, and use zero-value placeholders as a last resort so the dashboard never crashes entirely.
+
+**What I did after:** I wrote `get_crypto_data_batch()` which assembles all uncached coin IDs into one comma-separated API call, then distributes the results back to individual cache entries. I implemented the three-tier fallback (`live → stale cache → zero fallback`) across both stock and crypto functions, and added a TTL-based cache layer (`app/services/cache.py`) with separate fresh and stale thresholds so recently-fetched data serves instantly while older data still acts as a safety net. I also added `[source]` tags to each response so I could debug which tier was serving data during testing.
