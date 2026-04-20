@@ -533,13 +533,21 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
     # of any asset, or ask their own questions — powered by NVIDIA Nemotron
     # via OpenRouter. I did this because the educational goal of the platform
     # means users should be able to learn about assets interactively.
+    # Match news articles for this asset to pass as context to the AI.
+    matched_news = _match_news_for_asset(symbol, name, news_articles or [])
+    _news_payload = [
+        {"title": a.get("title", ""), "sentiment": a.get("sentiment", "Neutral"),
+         "published": a.get("published", "")}
+        for a in matched_news
+    ]
+
     ai_key = f"ai_{symbol}_{atype}"
     if st.button("AI Summary", key=ai_key, use_container_width=True):
         with st.spinner("Getting AI summary..."):
-            ai_resp, ai_err = api_get(
-                f"/api/ai/summary?symbol={symbol}&name={name}"
-                f"&asset_type={atype}&price={price}&change={change}"
-            )
+            ai_resp, ai_err = api_post("/api/ai/summary", {
+                "symbol": symbol, "name": name, "asset_type": atype,
+                "price": price, "change": change, "news": _news_payload,
+            })
         if ai_err:
             st.warning("AI summary is temporarily unavailable.")
         elif ai_resp.status_code == 200:
@@ -571,11 +579,11 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
     )
     if user_q and st.button("Ask", key=f"askbtn_{symbol}_{atype}", use_container_width=True):
         with st.spinner("Thinking..."):
-            ai_resp, ai_err = api_get(
-                f"/api/ai/ask?symbol={symbol}&name={name}"
-                f"&asset_type={atype}&price={price}&change={change}"
-                f"&question={user_q}"
-            )
+            ai_resp, ai_err = api_post("/api/ai/ask", {
+                "symbol": symbol, "name": name, "asset_type": atype,
+                "price": price, "change": change,
+                "question": user_q, "news": _news_payload,
+            })
         if ai_err:
             st.warning("AI is temporarily unavailable.")
         elif ai_resp.status_code == 200:
@@ -923,6 +931,14 @@ def render_market_overview():
                     # I send the actual price history to a dedicated /api/ai/chart
                     # endpoint so the AI can reference specific dates and prices
                     # rather than giving a generic summary.
+                    # Match news for the selected chart asset.
+                    _chart_news = _match_news_for_asset(sym, ch_name, _ov_articles)
+                    _chart_news_payload = [
+                        {"title": a.get("title", ""), "sentiment": a.get("sentiment", "Neutral"),
+                         "published": a.get("published", "")}
+                        for a in _chart_news
+                    ]
+
                     chart_ai_key = f"chart_ai_{sym}_{atype}"
                     if st.button("AI Summary — Explain this chart", key=chart_ai_key, use_container_width=True):
                         with st.spinner("Analysing chart..."):
@@ -932,6 +948,7 @@ def render_market_overview():
                                 "asset_type": atype,
                                 "period": period_labels.get(period, period),
                                 "history": history,
+                                "news": _chart_news_payload,
                             }, timeout=35)
                         if ai_err:
                             st.warning("AI summary is temporarily unavailable.")
@@ -965,6 +982,7 @@ def render_market_overview():
                                 "period": period_labels.get(period, period),
                                 "history": history,
                                 "question": chart_q,
+                                "news": _chart_news_payload,
                             }, timeout=35)
                         if ai_err:
                             st.warning("AI is temporarily unavailable.")
