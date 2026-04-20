@@ -345,8 +345,12 @@ button[key*="chart_ai_"]:hover {
 # while local development uses environment variables or the default.
 def _get_backend_url():
     try:
-        if "BACKEND_URL" in st.secrets:
-            return st.secrets["BACKEND_URL"]
+        import toml as _toml, pathlib as _pl
+        for p in [_pl.Path(".streamlit/secrets.toml"), _pl.Path.home() / ".streamlit/secrets.toml"]:
+            if p.exists():
+                data = _toml.load(p)
+                if "BACKEND_URL" in data:
+                    return data["BACKEND_URL"]
     except Exception:
         pass
     return os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
