@@ -340,9 +340,16 @@ button[key*="chart_ai_"]:hover {
 """, unsafe_allow_html=True)
 
 
-# I made the backend URL configurable via environment variable so the
-# frontend works both locally and when hosted on Render/Streamlit Cloud.
-BACKEND_URL     = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+# I made the backend URL configurable so the frontend works both locally
+# and when hosted on Streamlit Cloud. Streamlit Cloud uses st.secrets (TOML),
+# while local development uses environment variables or the default.
+def _get_backend_url():
+    try:
+        return st.secrets["BACKEND_URL"]
+    except Exception:
+        return os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+
+BACKEND_URL     = _get_backend_url()
 REQUEST_TIMEOUT = 10
 
 PUBLIC_PAGES  = ["Login", "Register", "Market Overview (Guest)", "Learn"]
@@ -371,6 +378,13 @@ def _init_state():
 
 
 _init_state()
+
+
+# Streamlit renders text between $ signs as LaTeX math, which breaks
+# AI responses containing dollar amounts like "$259.48". This helper
+# escapes dollar signs so they display as plain text.
+def _escape_ai(text: str) -> str:
+    return text.replace("$", "&#36;")
 
 
 def _apply_pending_page():
@@ -537,7 +551,7 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
         st.markdown(
             f'<div class="tip-box">'
             f'<div class="tip-label">AI Summary — {symbol.upper()}</div>'
-            f'<div class="tip-content">{st.session_state[f"ai_result_{ai_key}"]}</div>'
+            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_result_{ai_key}"])}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -571,7 +585,7 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
         st.markdown(
             f'<div class="tip-box">'
             f'<div class="tip-label">AI Answer — {symbol.upper()}</div>'
-            f'<div class="tip-content">{st.session_state[f"ai_answer_{ask_key}"]}</div>'
+            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_answer_{ask_key}"])}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -928,7 +942,7 @@ def render_market_overview():
                         st.markdown(
                             f'<div class="tip-box">'
                             f'<div class="tip-label">AI Summary — {sym.upper()} Chart</div>'
-                            f'<div class="tip-content">{st.session_state[f"ai_result_{chart_ai_key}"]}</div>'
+                            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_result_{chart_ai_key}"])}</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
@@ -961,7 +975,7 @@ def render_market_overview():
                         st.markdown(
                             f'<div class="tip-box">'
                             f'<div class="tip-label">AI Answer — {sym.upper()}</div>'
-                            f'<div class="tip-content">{st.session_state[f"ai_answer_{chart_ask_key}"]}</div>'
+                            f'<div class="tip-content">{_escape_ai(st.session_state[f"ai_answer_{chart_ask_key}"])}</div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
