@@ -1,6 +1,3 @@
-"""I centralised all config here so sensitive values like API keys
-are loaded from .env and never hardcoded in the source code."""
-
 import os
 from dotenv import load_dotenv
 

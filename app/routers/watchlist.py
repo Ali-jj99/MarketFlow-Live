@@ -1,5 +1,3 @@
-"""I implemented the watchlist routes so users can save, view, and remove assets."""
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError

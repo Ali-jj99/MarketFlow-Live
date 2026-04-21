@@ -1,6 +1,3 @@
-"""I stored all educational content in this module so it stays separate
-from the UI code and is easy to update."""
-
 GLOSSARY: dict[str, str] = {
     "Stock": (
         "A stock represents a small piece of ownership in a company. "

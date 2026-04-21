@@ -27,8 +27,6 @@ DEFAULT_CRYPTOS = [
 
 @router.get("/overview")
 def market_overview():
-    # I implemented parallel fetching for stocks and batched API calls for crypto
-    # because fetching 30 assets one by one would take 30+ seconds.
     with ThreadPoolExecutor(max_workers=6) as executor:
         stock_results = list(executor.map(get_stock_data, DEFAULT_STOCKS))
 

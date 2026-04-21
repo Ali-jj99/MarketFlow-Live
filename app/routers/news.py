@@ -1,6 +1,3 @@
-"""I implemented the news route using Alpha Vantage's sentiment API
-so users can see how the market interprets headlines."""
-
 import time
 import requests as http_requests
 from fastapi import APIRouter, Query

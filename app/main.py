@@ -9,8 +9,6 @@ from app.database import engine, Base
 from app.routers import auth, market, search, watchlist, compare, news, ai
 
 
-# I wrote this migration helper because SQLAlchemy's create_all() never adds
-# new columns to existing tables  so the database would break after schema changes.
 def _migrate_missing_columns():
     inspector = sa_inspect(engine)
     existing_tables = inspector.get_table_names()

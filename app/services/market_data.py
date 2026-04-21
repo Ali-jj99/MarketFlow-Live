@@ -1,7 +1,3 @@
-"""I implemented all external API calls here — Yahoo Finance for stocks
-and CoinGecko for crypto. Every function uses a three-tier fallback:
-live data -> stale cache -> zero fallback, so the dashboard never crashes."""
-
 import requests as http_requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -137,8 +133,6 @@ def get_stock_history(ticker: str, period: str = "7d") -> list:
     }
     range_str, interval = range_map.get(period, ("7d", "1d"))
 
-    # I added open/high/low alongside close so the frontend can render
-    # candlestick charts — the Yahoo API already returns this data.
     try:
         data = _yahoo_chart(ticker.upper(), range_str=range_str, interval=interval)
         result_block = data["chart"]["result"][0]
@@ -248,8 +242,6 @@ def get_crypto_data(coin_id: str) -> dict:
 
 
 def get_crypto_data_batch(coin_ids: list[str]) -> list[dict]:
-    # I implemented batch fetching to get all crypto prices in one API call
-    # instead of 15 separate calls, which would hit CoinGecko's rate limit.
     results_map: dict[str, dict] = {}
 
     uncached_ids: list[str] = []
@@ -317,8 +309,6 @@ def get_crypto_data_batch(coin_ids: list[str]) -> list[dict]:
 
 
 def get_crypto_history(coin_id: str, days: int = 7) -> list:
-    # I switched to CoinGecko's /ohlc endpoint so we get candlestick data
-    # for crypto too — it returns [timestamp, open, high, low, close].
     try:
         url = (
             f"{COINGECKO_BASE}/coins/{coin_id}/ohlc"

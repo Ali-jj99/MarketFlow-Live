@@ -1,6 +1,3 @@
-"""I implemented the database connection here using SQLAlchemy so
-the rest of the app can share a single engine and session factory."""
-
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker

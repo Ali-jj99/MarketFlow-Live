@@ -1,11 +1,4 @@
-"""
-MarketFlow Live — Streamlit Frontend (dashboard.py)
-
-I built this as the main user interface for MarketFlow Live. It connects to
-the FastAPI backend to fetch live market data, news, and manage watchlists.
-I used Streamlit for the frontend, Plotly for interactive charts, and custom
-CSS for the dark financial-dashboard theme.
-"""
+"""MarketFlow Live — Streamlit Frontend (dashboard.py)"""
 
 import streamlit as st
 import requests
@@ -19,8 +12,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from app.services.education import GLOSSARY, TIPS, LEARN_SECTIONS
 
 
-# I implemented these brief descriptions so users can see what each asset is
-# at a glance — important for the educational goal of the platform.
 ASSET_BRIEFS: dict[str, str] = {
     "AAPL":  "Apple — Consumer electronics giant. Makes iPhones, Macs, and services.",
     "MSFT":  "Microsoft — Software & cloud leader. Azure, Office 365, Windows.",
@@ -55,7 +46,6 @@ ASSET_BRIEFS: dict[str, str] = {
 }
 
 
-# I wrote a shared Plotly layout so every chart matches the dark theme.
 _PLOTLY_LAYOUT = dict(
     paper_bgcolor="#0b0e11",
     plot_bgcolor="#1e2329",
@@ -78,13 +68,8 @@ st.set_page_config(
 )
 
 
-# I wrote custom CSS for a dark financial-dashboard theme because Streamlit's
-# default light styling didn't suit the professional look I wanted.
 st.markdown("""
 <style>
-/* I updated the colour scheme to reduce blue dominance and make the platform
-   more visually engaging for young users. Inspired by Binance (amber accents)
-   and Bloomberg Terminal (dark, professional backgrounds). */
 [data-testid="stAppViewContainer"] { background-color: #0b0e11; color: #eaecef; }
 [data-testid="stSidebar"]           { background-color: #12161c; border-right: 1px solid #2b3139; }
 [data-testid="stHeader"]            { background: transparent; }
@@ -340,9 +325,6 @@ button[key*="chart_ai_"]:hover {
 """, unsafe_allow_html=True)
 
 
-# I made the backend URL configurable so the frontend works both locally
-# and when hosted on Streamlit Cloud. Streamlit Cloud uses st.secrets (TOML),
-# while local development uses environment variables or the default.
 def _get_backend_url():
     try:
         import toml as _toml, pathlib as _pl
@@ -362,8 +344,6 @@ PUBLIC_PAGES  = ["Login", "Register", "Market Overview (Guest)", "Learn"]
 PRIVATE_PAGES = ["Market Overview", "Search", "My Watchlist", "Compare", "Learn"]
 
 
-# I used session_state to persist data across Streamlit reruns because
-# Streamlit re-executes the entire script on every user interaction.
 def _init_state():
     defaults = {
         "user_email":        None,
@@ -473,7 +453,7 @@ def _source_badge(source: str) -> str:
 
 
 def _match_news_for_asset(symbol: str, name: str, articles: list) -> list:
-    """I wrote this to match news articles to a specific asset by checking
+    """Match news articles to a specific asset by checking
     if the title mentions the symbol or company name."""
     matched = []
     sym_up = symbol.upper()
@@ -495,7 +475,7 @@ def _match_news_for_asset(symbol: str, name: str, articles: list) -> list:
 def render_asset_card(item: dict, show_save_btn: bool = False,
                       wl_symbols: set | None = None,
                       news_articles: list | None = None):
-    """I implemented this as the core reusable card component for displaying
+    """Core reusable card component for displaying
     any stock or crypto with price, change, brief, and expandable news."""
     price   = item.get("price") or 0.0
     change  = item.get("change") or 0.0
@@ -533,11 +513,6 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
                     if art.get("url"):
                         st.caption(f"[Read article →]({art['url']})")
 
-    # I added this AI section so users can get a beginner-friendly explanation
-    # of any asset, or ask their own questions — powered by NVIDIA Nemotron
-    # via OpenRouter. I did this because the educational goal of the platform
-    # means users should be able to learn about assets interactively.
-    # Match news articles for this asset to pass as context to the AI.
     matched_news = _match_news_for_asset(symbol, name, news_articles or [])
     _news_payload = [
         {"title": a.get("title", ""), "sentiment": a.get("sentiment", "Neutral"),
@@ -570,10 +545,6 @@ def render_asset_card(item: dict, show_save_btn: bool = False,
             unsafe_allow_html=True,
         )
 
-    # I implemented this "Ask AI" text input so users can type their own
-    # questions about the asset — e.g. "what does this stock do" or
-    # "is this crypto safe for beginners". This makes the platform more
-    # interactive and educational rather than just showing static data.
     ask_key = f"ask_{symbol}_{atype}"
     user_q = st.text_input(
         "Ask AI about this asset",
@@ -723,8 +694,6 @@ with st.sidebar:
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-    # I added sidebar widgets to fill the empty space below navigation
-    # and give users useful at-a-glance information.
     if st.session_state.get("user_email"):
         import random
         sidebar_tips = [
@@ -812,10 +781,6 @@ def render_market_overview():
 
         data = resp.json()
 
-        # I built this Market Mood indicator to give beginners an instant
-        # sense of whether the market is having a good or bad day — before
-        # they even look at individual prices. No other student aggregator
-        # does this, and it reinforces the educational goal.
         all_items = data.get("stocks", []) + data.get("crypto", [])
         ups   = sum(1 for a in all_items if (a.get("change") or 0) > 0)
         downs = sum(1 for a in all_items if (a.get("change") or 0) < 0)
@@ -905,10 +870,6 @@ def render_market_overview():
                 if history:
                     df = pd.DataFrame(history)
                     fig = go.Figure()
-                    # I removed fill="tozeroy" because it filled from the price
-                    # line all the way down to $0, making high-priced stocks like
-                    # AAPL ($270) appear as a solid blue block with no visible
-                    # variation. A clean line chart is much easier to read.
                     fig.add_trace(go.Scatter(
                         x=df["date"], y=df["price"],
                         mode="lines+markers",
@@ -932,10 +893,6 @@ def render_market_overview():
                     st.plotly_chart(fig, use_container_width=True,
                                    config={"displayModeBar": False})
 
-                    # I send the actual price history to a dedicated /api/ai/chart
-                    # endpoint so the AI can reference specific dates and prices
-                    # rather than giving a generic summary.
-                    # Match news for the selected chart asset.
                     _chart_news = _match_news_for_asset(sym, ch_name, _ov_articles)
                     _chart_news_payload = [
                         {"title": a.get("title", ""), "sentiment": a.get("sentiment", "Neutral"),
@@ -1007,10 +964,6 @@ def render_market_overview():
                 else:
                     st.info("No historical data available for this asset.")
 
-        # I built this Portfolio Simulator so users can ask "What if I invested
-        # $X in this asset?" — it uses real historical prices to show what their
-        # money would be worth today. This is unique to MarketFlow Live and
-        # reinforces the educational goal by making price data tangible.
         st.markdown('<div class="section-header">💡 Portfolio Simulator — "What If?"</div>',
                     unsafe_allow_html=True)
         st.caption(
@@ -1428,9 +1381,6 @@ def render_compare():
         textfont=dict(color="#c0c8dc", size=12),
         hovertemplate="<b>%{y}</b><br>24h Change: %{x:+.2f}%<extra></extra>",
     ))
-    # I built the layout dict separately here because _PLOTLY_LAYOUT already
-    # contains xaxis/yaxis keys, and passing them again as kwargs would cause
-    # a "multiple values for keyword argument" error in Plotly.
     bar_layout = {**_PLOTLY_LAYOUT}
     bar_layout.update(
         height=max(180, len(assets) * 70),
@@ -1448,8 +1398,6 @@ def render_compare():
         unsafe_allow_html=True,
     )
 
-    # I added a chart type toggle so users can switch between a simple
-    # line chart and a candlestick chart — educational for beginners.
     chart_type = st.radio(
         "Chart style",
         ["Line Chart", "Candlestick Chart"],

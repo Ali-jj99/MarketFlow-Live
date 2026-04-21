@@ -1,8 +1,3 @@
-"""I created this route to integrate AI-powered summaries into the platform.
-I use OpenRouter's API with OpenAI's GPT-OSS 120B model because it's free,
-follows instructions well, and produces clear educational explanations —
-which fits the goal of helping users understand what each stock or crypto is."""
-
 import requests as http_requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -14,12 +9,8 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL_ID = "openai/gpt-oss-120b:free"
 
-# I implemented a simple in-memory cache so the same asset doesn't trigger
-# repeated API calls — this keeps the platform fast and avoids unnecessary requests.
 _summary_cache: dict[str, str] = {}
 
-# GPT-OSS follows system messages properly (unlike Nemotron which echoed them),
-# so I can now use a system message to set the tone and rules consistently.
 _SYSTEM_MESSAGE = {
     "role": "system",
     "content": (
@@ -117,12 +108,8 @@ def _build_news_context(news: list[NewsArticle]) -> str:
     return "\nRecent news:\n" + "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Few-shot examples
-# ---------------------------------------------------------------------------
 
-# Few-shot examples help the model match the desired tone and length,
-# complementing the system message with concrete demonstrations.
+
 _SUMMARY_EXAMPLES = [
     {
         "role": "user",
@@ -175,8 +162,6 @@ _ASK_EXAMPLES = [
     },
 ]
 
-# Few-shot example for chart analysis — now includes OHLC data so the model
-# can reference intraday ranges, not just closing prices.
 _CHART_EXAMPLE = [
     {
         "role": "user",
@@ -204,9 +189,7 @@ _CHART_EXAMPLE = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
+
 
 @router.post("/summary")
 def get_ai_summary(req: SummaryRequest):
@@ -245,7 +228,7 @@ def get_ai_summary(req: SummaryRequest):
 
 @router.post("/ask")
 def ask_ai_question(req: AskRequest):
-    """Users can ask their own questions about any asset — the educational goal
+    """Users can ask their own questions about any asset  the educational goal
     means they should be able to interact with the data and learn by asking."""
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=503, detail="AI service not configured")
