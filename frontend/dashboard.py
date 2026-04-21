@@ -366,9 +366,6 @@ def _init_state():
 _init_state()
 
 
-# Streamlit renders text between $ signs as LaTeX math, which breaks
-# AI responses containing dollar amounts like "$259.48". This helper
-# escapes dollar signs so they display as plain text.
 def _escape_ai(text: str) -> str:
     return text.replace("$", "&#36;")
 
@@ -1452,8 +1449,6 @@ def render_compare():
             st.plotly_chart(fig_hist, use_container_width=True, config={"displayModeBar": False})
 
     else:
-        # Candlestick view — one chart per asset because candlestick charts
-        # with different price ranges don't overlay well.
         for i, item in enumerate(assets):
             history = item.get("history", [])
             if not history or "open" not in history[0]:

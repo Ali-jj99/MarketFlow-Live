@@ -55,8 +55,6 @@ _YAHOO_HEADERS = {
     "Accept": "application/json",
 }
 
-# CoinGecko requires a demo API key for requests from cloud servers.
-# Without it, requests from IPs like Render's get blocked with 429 errors.
 _COINGECKO_HEADERS = {
     **_YAHOO_HEADERS,
     **({"x-cg-demo-api-key": COINGECKO_API_KEY} if COINGECKO_API_KEY else {}),
@@ -283,7 +281,6 @@ def get_crypto_data_batch(coin_ids: list[str]) -> list[dict]:
         except Exception as e:
             print(f"[market_data] Batch crypto fetch failed: {e}")
 
-    # 3. Assemble final list in the original order, with fallbacks
     output: list[dict] = []
     for coin_id in coin_ids:
         cid = coin_id.lower()
@@ -332,7 +329,6 @@ def get_crypto_history(coin_id: str, days: int = 7) -> list:
         return history
     except Exception as e:
         print(f"[market_data] Crypto history failed for {coin_id}: {e}")
-        # Fallback to simple price history if OHLC fails
         try:
             url = (
                 f"{COINGECKO_BASE}/coins/{coin_id}/market_chart"

@@ -8,10 +8,8 @@ showing data when an external API is rate-limited or unreachable.
 import time
 from typing import Any
 
-# {key: {"data": Any, "timestamp": float}}
 _cache: dict[str, dict] = {}
 
-# How long (seconds) before a cache entry is considered stale
 TTL: int = 60
 
 

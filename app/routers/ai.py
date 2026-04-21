@@ -24,10 +24,6 @@ _SYSTEM_MESSAGE = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Pydantic request models
-# ---------------------------------------------------------------------------
-
 class NewsArticle(BaseModel):
     title: str = ""
     sentiment: str = "Neutral"
@@ -62,10 +58,6 @@ class ChartRequest(BaseModel):
     question: str = ""
     news: list[NewsArticle] = []
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _call_ai(messages: list[dict], max_tokens: int = 250) -> str:
     """Centralised API call logic — keeps the code DRY and easier to maintain."""
@@ -268,7 +260,6 @@ def analyse_chart(req: ChartRequest):
     asset_label = f"{req.name} ({req.symbol.upper()})" if req.name else req.symbol.upper()
     type_label = "stock" if req.asset_type == "stock" else "cryptocurrency"
 
-    # Format each day with full OHLC so the AI can discuss intraday ranges.
     data_lines = []
     for point in req.history:
         date = point.get("date", "")

@@ -24,7 +24,6 @@ class Watchlist(Base):
 
     owner = relationship("User", back_populates="watchlist")
 
-    # Prevent duplicate entries for the same user / asset combination
     __table_args__ = (
         UniqueConstraint("user_id", "symbol", "asset_type", name="uq_user_symbol_type"),
     )
