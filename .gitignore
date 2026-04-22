@@ -1,22 +1,16 @@
-# Environment & secrets — NEVER commit these
 .env
 marketflow.db
 
-# Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 
-# IDE files
 .idea/
 *.iml
 .vscode/
 
-# OS files
 .DS_Store
 Thumbs.db
 
-# Misc
 .python-version
-.claude/
