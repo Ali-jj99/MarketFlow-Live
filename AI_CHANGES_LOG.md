@@ -37,3 +37,27 @@ This file documents specific instances where I used Claude via the Cmux code ter
 **How Claude via Cmux helped:** I asked Claude via the Cmux code terminal to help trace why saves were failing. It identified that the issue was at the database schema level (not the API or frontend) and suggested writing a startup migration function that uses SQLAlchemy's inspector to compare live table columns against the ORM models and run ALTER TABLE for anything missing.
 
 **What I did after:** I implemented the `_migrate_missing_columns()` function in `app/main.py` based on this approach, tested it by checking my local database, and added error logging to the watchlist route so I could trace issues in the future.
+
+---
+
+## 4. Render Frontend-Backend Deployment Fix
+
+**Problem:** After deploying FastAPI backend to Render and Streamlit frontend to Streamlit Cloud, the frontend could not reach the backend. Requests failed with connection errors because the frontend was still pointing to localhost:8000.
+
+**What happened:** During local development the Streamlit frontend used http://localhost:8000 for all API calls. When deployed, the backend was at a Render URL (https://mfl-project.onrender.com) but the frontend config still referenced localhost. Additionally, Render's free tier spins down after 15 minutes of inactivity, causing the first request after idle to fail with a timeout before the server cold-starts.
+
+**How Claude via Cmux helped:** I asked Claude via the Cmux code terminal to diagnose why the deployed frontend returned connection refused errors. It identified the hardcoded localhost issue and suggested using an environment variable for the API base URL so the same codebase works locally and in production. It also explained Render's cold-start behaviour and suggested adding a retry mechanism with a loading indicator.
+
+**What I did after:** I added a configurable API_BASE_URL environment variable in config.py, set it to the Render URL in the Streamlit Cloud secrets, and added a simple retry wrapper with a spinner in the frontend so users see a "Connecting to server..." message during cold starts rather than an error.
+
+---
+
+## 5. Plotly Compare Chart yaxis Duplicate Key Error
+
+**Problem:** The compare page crashed with a Plotly error when users tried to compare more than two assets. The chart would render for two assets but throw a JavaScript error and show a blank chart for three or four.
+
+**What happened:** When building the comparison chart, each asset's trace was assigned a separate y-axis (yaxis, yaxis2, yaxis3, yaxis4). The layout dictionary was constructed in a loop but the logic for generating axis keys had a bug: it generated "yaxis" for the first trace and "yaxis2" for the second, but for the third and fourth it duplicated "yaxis2" instead of producing "yaxis3" and "yaxis4" because the index offset was wrong.
+
+**How Claude via Cmux helped:** I pasted the Plotly error traceback and the compare chart building code into Claude via the Cmux code terminal. It identified that the axis key generation used `f"yaxis{i}"` where i started at 1, producing "yaxis1" instead of "yaxis" for the first axis (Plotly expects "yaxis" not "yaxis1") and then repeating keys. It suggested using `f"yaxis{'' if i == 0 else i+1}"` to produce the correct sequence.
+
+**What I did after:** I fixed the axis key generation in the compare chart function, tested it with 2, 3, and 4 assets, and verified all traces rendered correctly with independent y-axes. I also added input validation to cap comparisons at 4 assets maximum.
